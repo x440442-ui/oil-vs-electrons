@@ -75,6 +75,8 @@ def main(demo: bool):
     tickers = list(dict.fromkeys(list(C.COMMODITIES) + all_eq))
     px = src.prices(tickers, C.LOOKBACK)
     px = px.dropna(how="all")
+    if not demo:
+        px = price_cache(px, tickers)
     missing = [t for t in tickers if t not in px.columns or px[t].dropna().empty]
     if missing:
         ERRORS.append(f"prices missing: {', '.join(missing)}")
@@ -86,7 +88,9 @@ def main(demo: bool):
         try:
             fred[sid] = src.fred(sid)
         except Exception as e:  # noqa: BLE001
-            ERRORS.append(f"FRED {sid}: {e}")
+            ERRORS.append(f"{sid}: {e}")
+    if not demo:
+        fred = fred_cache(fred)
 
     r_pct = fred["DGS3MO"].iloc[-1] if "DGS3MO" in fred else 4.0
     r = math.log(1 + r_pct / 100)  # continuous-compounding risk-free rate
@@ -117,6 +121,36 @@ def main(demo: bool):
 
 
 # ======================================================================
+# Last-good-value caches: if a source fails on a given day, the page keeps
+# working on the most recent successful download (and says so in the notes).
+def price_cache(px, tickers):
+    path = DATA / "cache_prices.csv"
+    cache = pd.read_csv(path, index_col=0, parse_dates=True) if path.exists() else pd.DataFrame()
+    for t in tickers:
+        if (t not in px.columns or px[t].dropna().empty) and t in cache.columns and not cache[t].dropna().empty:
+            px[t] = cache[t].reindex(px.index).ffill()
+            ERRORS.append(f"{t}: live download failed, using cached prices to {cache[t].dropna().index[-1]:%Y-%m-%d}")
+    DATA.mkdir(exist_ok=True)
+    keep = [t for t in tickers if t in px.columns]
+    px[keep].round(4).to_csv(path)
+    return px
+
+
+def fred_cache(fred):
+    path = DATA / "cache_series.json"
+    cache = json.loads(path.read_text()) if path.exists() else {}
+    for sid in C.FRED:
+        if sid not in fred and sid in cache:
+            c = cache[sid]
+            fred[sid] = pd.Series(c["values"], index=pd.to_datetime(c["dates"]))
+            ERRORS.append(f"{sid}: using cached series to {c['dates'][-1]}")
+    for sid, s in fred.items():
+        cache[sid] = {"dates": [d.strftime("%Y-%m-%d") for d in s.index], "values": [float(v) for v in s.values]}
+    DATA.mkdir(exist_ok=True)
+    path.write_text(json.dumps(cache, separators=(",", ":")))
+    return fred
+
+
 @safe("rates")
 def rates_block(fred):
     g = lambda k: rnd(fred[k].iloc[-1], 3) if k in fred else None  # noqa: E731

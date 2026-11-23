@@ -70,23 +70,51 @@ class LiveSource:
         import yfinance as yf  # imported lazily so --demo needs no network libs
         self.yf = yf
 
-    def prices(self, tickers: list[str], period: str) -> pd.DataFrame:
+    def _batch(self, tickers, period):
         df = None
         for attempt in range(3):  # Yahoo occasionally rate-limits CI runners
             try:
                 df = self.yf.download(tickers, period=period, auto_adjust=True,
-                                      progress=False, threads=True)
+                                      progress=False, threads=False)
                 if df is not None and not df.empty:
                     break
             except Exception:  # noqa: BLE001
                 pass
             time.sleep(5 * (attempt + 1))
         if df is None or df.empty:
-            raise RuntimeError(f"Yahoo returned no data for {len(tickers)} tickers")
-        close = df["Close"] if isinstance(df.columns, pd.MultiIndex) else df[["Close"]]
-        if not isinstance(df.columns, pd.MultiIndex):
-            close.columns = tickers
-        close.index = pd.to_datetime(close.index).tz_localize(None)
+            return pd.DataFrame()
+        if isinstance(df.columns, pd.MultiIndex):
+            close = df["Close"].copy()
+        else:
+            close = df[["Close"]].copy()
+            close.columns = tickers[:1]
+        close.index = pd.to_datetime(close.index).tz_localize(None).normalize()
+        return close
+
+    def _single(self, t, period):
+        for attempt in range(3):
+            try:
+                h = self.yf.Ticker(t).history(period=period, auto_adjust=True)
+                if h is not None and not h.empty:
+                    s = h["Close"].copy()
+                    s.index = pd.to_datetime(s.index).tz_localize(None).normalize()
+                    return s
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(4 * (attempt + 1))
+        return None
+
+    def prices(self, tickers: list[str], period: str) -> pd.DataFrame:
+        close = self._batch(tickers, period)
+        # anything the batch call dropped gets a one-by-one retry
+        for t in tickers:
+            if t not in close.columns or close[t].dropna().empty:
+                s = self._single(t, period)
+                if s is not None:
+                    close = close.join(s.rename(t), how="outer") if not close.empty else s.rename(t).to_frame()
+                    if t in close.columns and isinstance(close[t], pd.DataFrame):
+                        close = close.loc[:, ~close.columns.duplicated(keep="last")]
+        close = close[~close.index.duplicated(keep="last")]
         return close.sort_index()
 
     def futures_curve(self, today: date, n: int) -> list[dict]:
@@ -116,16 +144,69 @@ class LiveSource:
                     time.sleep(1.5)
         return spot, chains
 
+    # ---------------------------------------------------------------- FRED
+    # fred.stlouisfed.org often times out from GitHub's cloud runners, so each
+    # series has a fallback that goes to the original publisher instead.
+    YAHOO_RATE_FALLBACK = {"DGS3MO": "^IRX", "DGS10": "^TNX", "DGS2": "2YY=F"}
+
     def fred(self, series_id: str) -> pd.Series:
+        errs = []
+        for fn in (self._fred_api, self._fred_csv, self._fallback):
+            try:
+                s = fn(series_id)
+                if s is not None and len(s) > 5:
+                    return s
+            except Exception as e:  # noqa: BLE001
+                errs.append(f"{fn.__name__}: {type(e).__name__}")
+        raise RuntimeError("all sources failed (" + "; ".join(errs) + ")")
+
+    def _fred_api(self, sid):
+        import os
         import requests
-        url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
-        r = requests.get(url, timeout=30, headers={"User-Agent": "oil-vs-electrons/1.0"})
+        key = os.environ.get("FRED_API_KEY")
+        if not key:
+            return None
+        r = requests.get("https://api.stlouisfed.org/fred/series/observations",
+                         params={"series_id": sid, "api_key": key, "file_type": "json",
+                                 "observation_start": "2020-01-01"}, timeout=30)
+        r.raise_for_status()
+        obs = r.json()["observations"]
+        s = pd.Series({pd.Timestamp(o["date"]): pd.to_numeric(o["value"], errors="coerce") for o in obs})
+        return s.dropna()
+
+    def _fred_csv(self, sid):
+        import requests
+        url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}&cosd=2020-01-01"
+        r = requests.get(url, timeout=(10, 25), headers={"User-Agent": "Mozilla/5.0 oil-vs-electrons"})
         r.raise_for_status()
         df = pd.read_csv(io.StringIO(r.text))
         df.columns = ["date", "value"]
         df["date"] = pd.to_datetime(df["date"])
         df["value"] = pd.to_numeric(df["value"], errors="coerce")
         return df.dropna().set_index("date")["value"]
+
+    def _fallback(self, sid):
+        import requests
+        if sid in self.YAHOO_RATE_FALLBACK:
+            s = self._single(self.YAHOO_RATE_FALLBACK[sid], "5y")
+            return s.dropna() if s is not None else None  # Yahoo quotes these in percent
+        if sid == "GASREGW":  # EIA weekly US regular retail gasoline, public XLS
+            url = "https://www.eia.gov/dnav/pet/hist_xls/EMM_EPMR_PTE_NUS_DPGw.xls"
+            r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()
+            df = pd.read_excel(io.BytesIO(r.content), sheet_name="Data 1", skiprows=2)
+            s = pd.Series(pd.to_numeric(df.iloc[:, 1], errors="coerce").values,
+                          index=pd.to_datetime(df.iloc[:, 0], errors="coerce"))
+            s = s[s.index.notna()].dropna()
+            return s[s.index >= "2020-01-01"]
+        if sid == "APU000072610":  # BLS average price, public API v1 (no key)
+            r = requests.get(f"https://api.bls.gov/publicAPI/v1/timeseries/data/{sid}", timeout=60)
+            r.raise_for_status()
+            data = r.json()["Results"]["series"][0]["data"]
+            pts = {pd.Timestamp(int(d["year"]), int(d["period"][1:]), 1): float(d["value"])
+                   for d in data if d["period"].startswith("M") and d["period"] != "M13"}
+            return pd.Series(pts).sort_index()
+        return None
 
 
 # =================================================================== demo
