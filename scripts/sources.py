@@ -200,11 +200,16 @@ class LiveSource:
             s = s[s.index.notna()].dropna()
             return s[s.index >= "2020-01-01"]
         if sid == "APU000072610":  # BLS average price, public API v1 (no key)
-            r = requests.get(f"https://api.bls.gov/publicAPI/v1/timeseries/data/{sid}", timeout=60)
+            # BLS rejects requests without a browser-like User-Agent (returns HTML)
+            r = requests.post("https://api.bls.gov/publicAPI/v2/timeseries/data/",
+                              json={"seriesid": [sid]}, timeout=60,
+                              headers={"User-Agent": "Mozilla/5.0 (Macintosh) oil-vs-electrons",
+                                       "Content-Type": "application/json"})
             r.raise_for_status()
             data = r.json()["Results"]["series"][0]["data"]
             pts = {pd.Timestamp(int(d["year"]), int(d["period"][1:]), 1): float(d["value"])
-                   for d in data if d["period"].startswith("M") and d["period"] != "M13"}
+                   for d in data if d["period"].startswith("M") and d["period"] != "M13"
+                   and d.get("value", "-").replace(".", "", 1).isdigit()}
             return pd.Series(pts).sort_index()
         return None
 

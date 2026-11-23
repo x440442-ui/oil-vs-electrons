@@ -294,7 +294,11 @@ def passthrough_block(px, fred):
 @safe("cost per mile")
 def cpm_block(fred, pt):
     gas = fred["GASREGW"]
-    elec = fred["APU000072610"]
+    if "APU000072610" in fred:
+        elec = fred["APU000072610"]
+    else:  # flat assumed price so the section still renders; flagged in notes
+        elec = pd.Series(C.ELEC_PRICE_FALLBACK, index=pd.date_range(end=pd.Timestamp.today(), periods=40, freq="MS"))
+        ERRORS.append(f"electricity price: using assumed ${C.ELEC_PRICE_FALLBACK}/kWh")
     cut = gas.index[-1] - pd.Timedelta(days=3 * 365)
     gas_cpm = gas[gas.index >= cut] / C.MPG
     home = elec[elec.index >= cut] * C.KWH_PER_MILE

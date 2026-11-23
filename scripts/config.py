@@ -44,6 +44,8 @@ FRED = {
 MPG = 28.0                # typical new US gasoline car, real-world combined
 KWH_PER_MILE = 0.32       # typical EV incl. ~10% charging losses (~3.1 mi/kWh)
 DCFC_PRICE = 0.48         # public DC fast-charging, $/kWh (US network list-price avg)
+# Used only if every electricity-price source fails and nothing is cached yet
+ELEC_PRICE_FALLBACK = 0.185  # US avg residential, $/kWh (BLS APU000072610, late 2025 level)
 
 # ------------------------------------------------------------ analytics
 LOOKBACK = "3y"           # price history to pull
