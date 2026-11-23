@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oil vs. Electrons — a live read on the transport-energy transition</title>
+<meta name="description" content="A self-updating quant dashboard: WTI futures curve, crack spreads, options-implied oil volatility, EV vs gasoline cost per mile, and factor betas of oil and EV equities.">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+<div id="demo-banner" class="banner" hidden>Demo mode: synthetic data generated offline. The scheduled GitHub Action replaces it with live market data.</div>
+
+<header class="wrap hero">
+  <p class="eyebrow">Live quant dashboard · refreshed every US trading day</p>
+  <h1>Oil vs. Electrons</h1>
+  <p class="dek">What the futures, options and equity markets are saying about the cost of moving a car one mile, today and over the next twelve months.</p>
+  <p class="byline">By <b>Xiaoyu (Laurel) Chen</b> · Duke University · EGRMGMT 534 · <span id="updated">loading…</span></p>
+</header>
+
+<main class="wrap">
+  <section class="kpis" id="kpis"></section>
+
+  <section class="card read">
+    <h2>Today's read</h2>
+    <ul id="commentary" class="notes"></ul>
+  </section>
+
+  <nav class="toc">
+    <a href="#oil">1 · Oil market</a><a href="#fuel">2 · Fuel economics</a><a href="#outlook">3 · 12-month outlook</a>
+    <a href="#equities">4 · Equities</a><a href="#options">5 · Volatility &amp; options</a><a href="#log">6 · Tracking log</a><a href="#method">Method</a>
+  </nav>
+
+  <!-- 1 ------------------------------------------------------------ -->
+  <section id="oil">
+    <h2 class="sec">1 · The oil market: curve, carry and cracks</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>WTI futures curve</h3>
+        <p class="sub">Settlement by delivery month. Earlier snapshots appear as the site builds its own history.</p>
+        <div id="ch-curve" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>Curve &amp; cost-of-carry metrics</h3>
+        <p class="sub">F = S·e<sup>(r+u−y)T</sup> ⇒ net convenience yield (y−u) = r − ln(F<sub>12</sub>/F<sub>1</sub>)/ΔT</p>
+        <table id="tb-curve" class="tbl"></table>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>3-2-1 crack spread ($/bbl)</h3>
+        <p class="sub">(2 × RBOB + 1 × ULSD − 3 × WTI) / 3: the gross margin of a simple refinery</p>
+        <div id="ch-crack" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>Pump vs. wholesale gasoline ($/gal)</h3>
+        <p class="sub">EIA retail regular (weekly) vs RBOB futures; the gap is taxes, distribution and retail margin</p>
+        <div id="ch-retail" class="chart"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 ------------------------------------------------------------ -->
+  <section id="fuel">
+    <h2 class="sec">2 · Fuel economics: cents per mile</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>Cost to drive one mile</h3>
+        <p class="sub" id="cpm-sub"></p>
+        <div id="ch-cpm" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>Breakevens</h3>
+        <p class="sub">Gasoline price where an EV stops being cheaper per mile, translated into WTI with a pass-through regression of pump prices on crude</p>
+        <table id="tb-be" class="tbl"></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 ------------------------------------------------------------ -->
+  <section id="outlook">
+    <h2 class="sec">3 · The next 12 months, as priced by the market</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>WTI: futures path with options-implied bands</h3>
+        <p class="sub">Centre = futures curve (risk-neutral mean). Bands = lognormal 50% / 90% ranges using USO implied volatility at each horizon.</p>
+        <div id="ch-fan" class="chart tall"></div>
+      </div>
+      <div class="card">
+        <h3>Gasoline cost per mile vs. EV, 12 months out</h3>
+        <p class="sub">WTI bands mapped through the pump-price regression, against home and fast-charging cost</p>
+        <div id="ch-fan-cpm" class="chart tall"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Risk-neutral probabilities (12 months)</h3>
+      <table id="tb-prob" class="tbl wide"></table>
+    </div>
+  </section>
+
+  <!-- 4 ------------------------------------------------------------ -->
+  <section id="equities">
+    <h2 class="sec">4 · Equities: is "long EV" a short-oil hedge?</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>Performance, rebased to 100</h3>
+        <p class="sub">Equal-weight, daily-rebalanced baskets</p>
+        <div class="seg" id="perf-range"><button data-d="252" class="on">1Y</button><button data-d="504">2Y</button><button data-d="9999">3Y</button></div>
+        <div id="ch-perf" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>Rolling 6-month oil beta</h3>
+        <p class="sub">β<sub>oil</sub> from r = α + β<sub>mkt</sub>·r<sub>SPY</sub> + β<sub>oil</sub>·r<sub>WTI</sub> + ε, controlling for the market</p>
+        <div id="ch-rbeta" class="chart"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Two-factor model, last 252 trading days</h3>
+      <p class="sub">t-stat |t| &gt; 2 marks a statistically meaningful oil exposure</p>
+      <div class="scroll"><table id="tb-factor" class="tbl wide"></table></div>
+    </div>
+    <div class="card">
+      <h3>The "transition trade": long EV makers / short oil equities</h3>
+      <p class="sub" id="spread-sub"></p>
+      <div id="ch-spread" class="chart short"></div>
+    </div>
+  </section>
+
+  <!-- 5 ------------------------------------------------------------ -->
+  <section id="options">
+    <h2 class="sec">5 · Volatility, options and risk</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>ATM implied-volatility term structure</h3>
+        <p class="sub">IVs solved from mid quotes with Black-Scholes (Brent root-finder), r = 3M T-bill</p>
+        <div id="ch-term" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>~30-day volatility smile</h3>
+        <p class="sub">OTM puts left of 1.0, OTM calls right. Moneyness = K / forward</p>
+        <div id="ch-smile" class="chart"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Implied vs realised, and the Greeks of a 30-day ATM option</h3>
+      <div class="scroll"><table id="tb-greeks" class="tbl wide"></table></div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>60-day realised volatility (annualised)</h3>
+        <div id="ch-rv" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>1-day 95% Value-at-Risk &amp; Expected Shortfall</h3>
+        <p class="sub">Historical (last 500 days) vs parametric with RiskMetrics EWMA volatility (λ = 0.94)</p>
+        <table id="tb-var" class="tbl"></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 ------------------------------------------------------------ -->
+  <section id="log">
+    <h2 class="sec">6 · Tracking log</h2>
+    <div class="card">
+      <p class="sub" id="log-sub"></p>
+      <div class="grid2 tight">
+        <div id="ch-log1" class="chart short"></div>
+        <div id="ch-log2" class="chart short"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>What to watch</h3>
+      <ul id="watch" class="notes"></ul>
+    </div>
+  </section>
+
+  <section id="method" class="card method">
+    <h2>Methodology &amp; data</h2>
+    <div class="cols">
+      <div>
+        <h4>Data</h4>
+        <ul>
+          <li>Futures, ETFs, equities and option chains: Yahoo Finance (via <code>yfinance</code>).</li>
+          <li>Treasury yields, EIA weekly retail gasoline (GASREGW), BLS average electricity price (APU000072610): FRED.</li>
+          <li>A GitHub Action runs every weekday after the US close, recomputes everything and redeploys this page. Curve snapshots and key metrics are appended to a log in the repo, so the history charts grow over time.</li>
+        </ul>
+        <h4>Assumptions</h4>
+        <ul id="assumptions"></ul>
+      </div>
+      <div>
+        <h4>Models</h4>
+        <ul>
+          <li><b>Carry:</b> annualised roll yield = ln(F<sub>1</sub>/F<sub>12</sub>)/ΔT; net convenience yield from the cost-of-carry relation.</li>
+          <li><b>Implied vol:</b> Black-Scholes inverted on bid/ask mids. American options and ETF dividends are treated as European, which is a known approximation. Term structure is interpolated in total variance σ²T.</li>
+          <li><b>Outlook bands:</b> lognormal around the futures price, P(F<sub>T</sub> &gt; K) = N(d<sub>2</sub>). These are <i>risk-neutral</i> probabilities: they embed risk premia and are not forecasts of physical probabilities.</li>
+          <li><b>Pass-through:</b> OLS of weekly retail gasoline on weekly-average WTI over 3 years.</li>
+          <li><b>Factor model:</b> OLS on daily log returns with SPY and front-month WTI as factors. The front-month series has roll gaps, which add noise to β<sub>oil</sub>.</li>
+          <li><b>VaR:</b> 95% historical quantile and Expected Shortfall; parametric 1.645·σ<sub>EWMA</sub>.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="fine">For education and portfolio purposes only; not investment advice. Source code: <a id="repo-link" href="#">GitHub</a>.</p>
+    <p class="fine" id="errors"></p>
+  </section>
+</main>
+<footer class="wrap fine">Built with Python (pandas, NumPy, SciPy), Plotly.js and GitHub Actions.</footer>
+<script src="app.js"></script>
+</body>
+</html>
